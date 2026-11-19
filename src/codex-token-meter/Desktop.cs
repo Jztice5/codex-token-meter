@@ -85,11 +85,13 @@ namespace CodexTokenMeter
         }
 
         [DllImport("user32.dll")] internal static extern IntPtr GetForegroundWindow();
+        [DllImport("user32.dll")] internal static extern bool SetForegroundWindow(IntPtr window);
         [DllImport("user32.dll")] private static extern IntPtr GetAncestor(IntPtr window, uint flags);
         [DllImport("user32.dll")] internal static extern bool GetWindowRect(IntPtr window, out Box box);
         [DllImport("user32.dll")] internal static extern bool GetCursorPos(out Point point);
         [DllImport("user32.dll")] internal static extern bool IsIconic(IntPtr window);
         [DllImport("user32.dll")] internal static extern bool IsWindow(IntPtr window);
+        [DllImport("user32.dll")] internal static extern bool IsWindowVisible(IntPtr window);
         [DllImport("user32.dll")] internal static extern uint GetDpiForWindow(IntPtr window);
         [DllImport("user32.dll")] internal static extern bool SetWindowPos(IntPtr window, IntPtr after, int x, int y, int width, int height, uint flags);
         [DllImport("user32.dll")] private static extern uint GetWindowThreadProcessId(IntPtr window, out int id);

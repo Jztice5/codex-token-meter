@@ -26,12 +26,12 @@ else
     file='CodexTokenMeter-macOS-Intel.zip'
 fi
 
-directory="$HOME/Library/Application Support/Codex Token Meter/plugin-bin/1.2.1"
+directory="$HOME/Library/Application Support/Codex Token Meter/plugin-bin/1.2.2"
 app="$directory/Codex Token Meter.app"
 for installed in '/Applications/Codex Token Meter.app' "$HOME/Applications/Codex Token Meter.app" "$app"; do
     if [[ -f "$installed/Contents/Info.plist" ]] &&
         [[ "$(/usr/libexec/PlistBuddy -c 'Print CFBundleIdentifier' "$installed/Contents/Info.plist" 2>/dev/null || true)" == local.codex-token-meter.desktop ]] &&
-        [[ "$(/usr/libexec/PlistBuddy -c 'Print CFBundleShortVersionString' "$installed/Contents/Info.plist" 2>/dev/null || true)" == 1.2.1 ]]; then
+        [[ "$(/usr/libexec/PlistBuddy -c 'Print CFBundleShortVersionString' "$installed/Contents/Info.plist" 2>/dev/null || true)" == 1.2.2 ]]; then
         app="$installed"
         break
     fi

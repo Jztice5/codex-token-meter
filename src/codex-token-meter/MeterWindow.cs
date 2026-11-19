@@ -1,5 +1,4 @@
 using System;
-using System.Diagnostics;
 using System.Globalization;
 using System.IO;
 using System.Linq;
@@ -21,7 +20,6 @@ namespace CodexTokenMeter
     {
         private const double BarHeight = 38, PanelWidth = 349, ChatHeight = 225, DetailGap = 6;
         private const double ModelRowHeight = 27, ModelListMaxHeight = 146, TodayFixedHeight = 155;
-        private const int DragReleaseGraceMilliseconds = 750;
         private static readonly CultureInfo NumberCulture = CultureInfo.GetCultureInfo("zh-CN");
         private readonly MeterSettings settings;
         private readonly string codexHome;
@@ -30,7 +28,6 @@ namespace CodexTokenMeter
         private readonly SessionTitles titles;
         private readonly TodayStore todayStore;
         private readonly Forms.NotifyIcon tray;
-        private readonly Stopwatch sinceDragRelease = new Stopwatch();
         private readonly Grid frame = new Grid();
         private readonly Border bar, detail, dot, cacheTrack, cacheFill;
         private readonly Border divider, detailRule;
@@ -45,7 +42,7 @@ namespace CodexTokenMeter
         private string readError, sessionId, observedTitle, selectedModel, followProblem;
         private int missedViews;
         private bool reading, summing, expanded, dragging, probing, closed, showToday, todayUnavailable;
-        private IntPtr handle, host;
+        private IntPtr handle, host, dragHost, dragReleaseHost;
         private Rect composer = Rect.Empty;
         private Desktop.Box lastHostBox;
         private DateTime nextProbe;
@@ -574,11 +571,13 @@ namespace CodexTokenMeter
                 hostHasFocus = Desktop.SameProcess(foreground, host);
             }
 
-            // Windows can report no foreground window briefly when the drag releases mouse capture.
-            bool releasingDrag = !hasForeground && IsVisible && sinceDragRelease.IsRunning
-                && sinceDragRelease.ElapsedMilliseconds < DragReleaseGraceMilliseconds;
-            bool hostInUse = host != IntPtr.Zero && !Desktop.IsIconic(host)
-                && (hostHasFocus || meterHasFocus || releasingDrag);
+            if (host != dragReleaseHost || (hasForeground && !meterHasFocus))
+                dragReleaseHost = IntPtr.Zero;
+
+            // A non-activating drag can leave Windows without a foreground window until the next click.
+            bool awaitingDragFocus = !hasForeground && IsVisible && dragReleaseHost != IntPtr.Zero;
+            bool hostInUse = host != IntPtr.Zero && Desktop.IsWindowVisible(host) && !Desktop.IsIconic(host)
+                && (hostHasFocus || meterHasFocus || awaitingDragFocus);
             if (!hostInUse && !IsActive && !dragging && !bar.ContextMenu.IsOpen)
             {
                 if (IsVisible) Hide();
@@ -693,6 +692,7 @@ namespace CodexTokenMeter
             Desktop.Box window;
             if (!Desktop.GetCursorPos(out cursor) || !Desktop.GetWindowRect(handle, out window)) return;
             dragging = true;
+            dragHost = host;
             dragX = cursor.X;
             dragY = cursor.Y;
             dragWindowX = window.Left;
@@ -721,9 +721,25 @@ namespace CodexTokenMeter
                 settings.OffsetY = (barTop - anchor.Y) / scale;
                 settings.Save();
             }
-            sinceDragRelease.Restart();
             dragging = false;
             ApplyPlacement();
+
+            if (host != IntPtr.Zero && host == dragHost)
+            {
+                dragReleaseHost = host;
+                Dispatcher.BeginInvoke(DispatcherPriority.Input, new Action(RestoreDragFocus));
+            }
+            dragHost = IntPtr.Zero;
+        }
+
+        private void RestoreDragFocus()
+        {
+            IntPtr target = dragReleaseHost;
+            if (closed || dragging || target == IntPtr.Zero || target != host ||
+                !Desktop.IsWindowVisible(target) || Desktop.IsIconic(target)) return;
+
+            if (Desktop.GetForegroundWindow() == IntPtr.Zero)
+                Desktop.SetForegroundWindow(target);
         }
 
         private void ResetPosition()

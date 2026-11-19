@@ -1,7 +1,7 @@
 {
   "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
   "name": "codex-token-meter",
-  "version": "1.2.1",
+  "version": "1.2.2",
   "description": "启动或检查显示 Codex 模型与 token 用量的本地浮条。",
   "extensions": {
     "com.openai": {
