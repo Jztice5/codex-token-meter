@@ -1,0 +1,2 @@
+*.sh text eol=lf
+plugins/codex-token-meter/assets/sha256.txt text eol=lf

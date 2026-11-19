@@ -23,7 +23,7 @@ if (!$expected -or (Get-FileHash -LiteralPath $payload -Algorithm SHA256).Hash -
     throw 'The bundled Windows executable failed its SHA-256 check.'
 }
 
-$directory = Join-Path $env:LOCALAPPDATA 'CodexTokenMeter/plugin-bin/1.2.0'
+$directory = Join-Path $env:LOCALAPPDATA 'CodexTokenMeter/plugin-bin/1.2.1'
 $null = New-Item -ItemType Directory -Path $directory -Force
 $program = Join-Path $directory $file
 if (!(Test-Path -LiteralPath $program) -or (Get-FileHash -LiteralPath $program -Algorithm SHA256).Hash -ne $expected) {

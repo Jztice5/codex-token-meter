@@ -5,14 +5,14 @@ description: "A compact desktop companion showing model and token usage beside t
 colors:
   primary: "#047968"
   primary-dark: "#5ACFB6"
-  surface: "#FCFCFB"
-  surface-dark: "#202123"
-  ink: "#20262A"
+  surface: "#FFFFFF"
+  surface-dark: "#181818"
+  ink: "#202124"
   ink-dark: "#F0F2F4"
   quiet: "#52616A"
   quiet-dark: "#AEB9C1"
   line: "#D9DFDE"
-  line-dark: "#3E454A"
+  line-dark: "#393B3E"
   track: "#DCE8E4"
   track-dark: "#303F3D"
   hover: "#EAF2EF"
@@ -36,13 +36,13 @@ components:
 
 ## Overview
 
-The accepted preview is a quiet status strip with a small green point, a model name, an abbreviated conversation total, and an explicit details action. It serves one person using Codex Desktop for Windows and uses Simplified Chinese for interface labels. The disclosure switches between the active conversation and today's model totals. The cache mark is the single graphical element in the details panel.
+The floating meter shows a small green status point, a model name, an abbreviated conversation total, and a details button. It uses Simplified Chinese labels on Windows and macOS. The details switch between the active conversation and today's model totals.
 
-`MeterWindow.RefreshTheme` is the runtime source for color values and mirrors the accepted palette here. `BarHeight`, `DetailGap`, `Surface` and `ButtonTemplate` own spacing and corners in device-independent pixels.
+`MeterPalette` in `Appearance.cs` provides the shared runtime colors. The platform window implementations own spacing and corners in device-independent pixels.
 
 ## Colors
 
-Use the Windows app appearance setting for the light and dark surfaces. The green signal means usage is available and marks the cached share of input. Keep unavailable measurements readable as text, use Windows system brushes for high contrast, and mark the selected view with the existing subtle action fill.
+Use Codex's light or dark appearance when it is explicitly set. Otherwise use the operating system's app appearance. The green signal means usage is available and marks the cached share of input in Windows details. Use the Windows system brushes in high-contrast mode and mark the selected view with a subtle fill.
 
 ## Typography
 

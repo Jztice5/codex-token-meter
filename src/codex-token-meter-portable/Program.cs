@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Globalization;
 using System.Text.Json;
 using Avalonia;
@@ -45,7 +46,6 @@ internal sealed class MeterApplication : Application
     public override void Initialize()
     {
         Styles.Add(new FluentTheme());
-        RequestedThemeVariant = ThemeVariant.Dark;
     }
 
     public override void OnFrameworkInitializationCompleted()
@@ -101,27 +101,24 @@ internal sealed class Preferences
 internal sealed class Meter
 {
     private const double Width = 349, BarHeight = 38, Gap = 6;
-    private static readonly IBrush Surface = Brush.Parse("#202123");
-    private static readonly IBrush Stroke = Brush.Parse("#3E454A");
-    private static readonly IBrush Quiet = Brush.Parse("#AEB9C1");
-    private static readonly IBrush Ink = Brush.Parse("#F0F2F4");
-    private static readonly IBrush Accent = Brush.Parse("#5ACFB6");
-    private static readonly IBrush Selected = Brush.Parse("#31413E");
+    private const int DragReleaseGraceMilliseconds = 1200;
     private static readonly CultureInfo Digits = CultureInfo.GetCultureInfo("en-US");
 
+    private readonly SolidColorBrush surface = new(), stroke = new(), quiet = new(), ink = new(), accent = new(), selected = new();
     private readonly Application app;
     private readonly IClassicDesktopStyleApplicationLifetime lifetime;
     private readonly bool preview;
     private readonly Preferences config;
     private readonly string home;
+    private readonly CodexAppearance appearance;
     private readonly SessionTitles titles;
     private readonly TodayStore today;
     private readonly Window window;
     private readonly StackPanel stack = new() { Spacing = Gap };
-    private readonly Border bar = Panel(10), details = Panel(12);
-    private readonly TextBlock model = Label("等待模型", 13, true), smallTotal = Label("— token", 12, true), status = Label("", 11, false, true);
+    private readonly Border bar, details;
+    private readonly TextBlock model, smallTotal, status;
     private readonly Border dot = new() { Width = 6, Height = 6, CornerRadius = new CornerRadius(3), VerticalAlignment = VerticalAlignment.Center };
-    private readonly Button toggle = Control("明细  ⌄"), chatTab = Control("当前对话"), todayTab = Control("今日用量");
+    private readonly Button toggle, chatTab, todayTab;
     private readonly StackPanel mainPanel = new() { Spacing = 10 };
     private readonly DispatcherTimer timer;
     private readonly TrayIcon tray;
@@ -135,6 +132,7 @@ internal sealed class Meter
     private DateTime nextToday = DateTime.MinValue;
     private PixelPoint dragStart;
     private Point dragOffset;
+    private readonly Stopwatch sinceDragRelease = new();
 
     internal Meter(Application app, IClassicDesktopStyleApplicationLifetime lifetime, bool preview)
     {
@@ -145,8 +143,12 @@ internal sealed class Meter
         config.Pinned = SessionBinding.ParseId(config.Pinned);
         home = Environment.GetEnvironmentVariable("CODEX_HOME") is { Length: > 0 } configured ? configured
             : Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".codex");
+        appearance = new CodexAppearance(home);
         titles = new SessionTitles(home);
         today = new TodayStore(home);
+        (bar, details) = (Panel(10), Panel(12));
+        (model, smallTotal, status) = (Label("等待模型", 13, true), Label("— token", 12, true), Label("", 11, subdued: true));
+        (toggle, chatTab, todayTab) = (Control("明细  ⌄"), Control("当前对话"), Control("今日用量"));
         window = new Window
         {
             Title = "Codex Token Meter", Width = Width, Height = BarHeight, CanResize = false,
@@ -154,6 +156,9 @@ internal sealed class Meter
             Topmost = true, Background = Brushes.Transparent, Content = stack,
             TransparencyLevelHint = new[] { WindowTransparencyLevel.Transparent }
         };
+        app.ActualThemeVariantChanged += OnThemeChanged;
+        RefreshThemePreference();
+        PaintTheme();
         window.KeyDown += (_, args) => { if (args.Key == Key.Escape && expanded) SetExpanded(false); };
         window.Closed += (_, _) => Stop();
         BuildPanel();
@@ -166,6 +171,30 @@ internal sealed class Meter
         TrayIcon.SetIcons(app, new TrayIcons { tray });
         timer = new DispatcherTimer(TimeSpan.FromMilliseconds(480), DispatcherPriority.Background, (_, _) => Tick());
         timer.Stop();
+    }
+
+    private void RefreshThemePreference()
+    {
+        ThemeVariant theme = appearance.ReadDarkPreference() switch
+        {
+            true => ThemeVariant.Dark,
+            false => ThemeVariant.Light,
+            null => ThemeVariant.Default
+        };
+        if (app.RequestedThemeVariant != theme) app.RequestedThemeVariant = theme;
+    }
+
+    private void OnThemeChanged(object sender, EventArgs args) => PaintTheme();
+
+    private void PaintTheme()
+    {
+        MeterPalette palette = app.ActualThemeVariant == ThemeVariant.Dark ? MeterPalette.Dark : MeterPalette.Light;
+        surface.Color = Color.Parse(palette.Surface);
+        stroke.Color = Color.Parse(palette.Stroke);
+        quiet.Color = Color.Parse(palette.Quiet);
+        ink.Color = Color.Parse(palette.Ink);
+        accent.Color = Color.Parse(palette.Signal);
+        selected.Color = Color.Parse(palette.Hover);
     }
 
     internal void Start()
@@ -237,12 +266,17 @@ internal sealed class Meter
             config.Y = dragOffset.Y + next.Y - dragStart.Y;
             Place();
         };
-        grip.PointerReleased += (_, e) => { if (dragging) { dragging = false; config.Save(); e.Pointer.Capture(null); } };
-        grip.PointerCaptureLost += (_, _) => { if (dragging) { dragging = false; config.Save(); } };
+        grip.PointerReleased += (_, e) =>
+        {
+            if (!dragging) return;
+            FinishDrag();
+            e.Pointer.Capture(null);
+        };
+        grip.PointerCaptureLost += (_, _) => FinishDrag();
         Put(row, grip, 0);
         Put(row, dot, 1);
         Put(row, model, 2);
-        Put(row, new Border { Background = Stroke, Margin = new Thickness(0, 8) }, 3);
+        Put(row, new Border { Background = stroke, Margin = new Thickness(0, 8) }, 3);
         smallTotal.HorizontalAlignment = HorizontalAlignment.Center;
         Put(row, smallTotal, 4);
         toggle.Click += (_, _) => SetExpanded(!expanded);
@@ -260,10 +294,22 @@ internal sealed class Meter
         details.Child = body;
     }
 
+    private void FinishDrag()
+    {
+        if (!dragging) return;
+        dragging = false;
+        sinceDragRelease.Restart();
+        config.Save();
+    }
+
     private async void Tick()
     {
         if (closed || preview) return;
+        RefreshThemePreference();
         var foreground = MacDesktop.Frontmost();
+        if (foreground.Pid == 0 && host != 0 && window.IsVisible &&
+            (dragging || (sinceDragRelease.IsRunning && sinceDragRelease.ElapsedMilliseconds < DragReleaseGraceMilliseconds)))
+            return;
         if (!foreground.Codex && !(foreground.Pid == Environment.ProcessId && host != 0))
         {
             host = 0;
@@ -448,14 +494,14 @@ internal sealed class Meter
         model.Text = slug == null ? "等待当前对话" : FormatModel(slug);
         ToolTip.SetTip(model, followProblem ?? readProblem ?? slug);
         TokenCounts counts = current?.Total;
-        dot.Background = counts == null || current.MissingUsage ? Stroke : Accent;
+        dot.Background = counts == null || current.MissingUsage ? stroke : accent;
         smallTotal.Text = counts == null ? "— token" : Compact(counts.Total) + " token";
         AutomationProperties.SetName(smallTotal, counts == null ? "等待会话用量" : "会话累计 " + Number(counts.Total) + " token");
         details.IsVisible = expanded;
         if (!expanded) return;
         details.Height = DetailHeight;
-        chatTab.Background = showToday ? Brushes.Transparent : Selected;
-        todayTab.Background = showToday ? Selected : Brushes.Transparent;
+        chatTab.Background = showToday ? Brushes.Transparent : selected;
+        todayTab.Background = showToday ? selected : Brushes.Transparent;
         mainPanel.Children.Clear();
 
         if (showToday)
@@ -480,7 +526,7 @@ internal sealed class Meter
         else
         {
             mainPanel.Children.Add(Pair(Metric("会话累计", Number(counts?.Total), 22), Metric("最近一次模型请求", Number(current?.Last?.Total), 22)));
-            mainPanel.Children.Add(new Border { Height = 1, Background = Stroke });
+            mainPanel.Children.Add(new Border { Height = 1, Background = stroke });
             mainPanel.Children.Add(Pair(Metric("输入", Number(counts?.Input), 14), Metric("其中缓存输入", Number(counts?.Cached), 14)));
             mainPanel.Children.Add(Pair(Metric("输出", Number(counts?.Output), 14), Metric("推理", Number(counts?.Reasoning), 14)));
             status.Text = readProblem ?? followProblem ?? (current?.MissingUsage == true ? "当前对话有请求未回报完整用量" : current?.UpdatedAt == null
@@ -495,6 +541,7 @@ internal sealed class Meter
         if (closed) return;
         closed = true;
         timer.Stop();
+        app.ActualThemeVariantChanged -= OnThemeChanged;
         tray.Dispose();
         lifetime.Shutdown();
     }
@@ -507,16 +554,16 @@ internal sealed class Meter
         return row;
     }
 
-    private static StackPanel Metric(string name, string exact, int size) => new() { Spacing = 1, Children = { Label(name, 11, false, true), Label(exact, size, true) } };
-    private static Border Panel(int radius) => new() { CornerRadius = new CornerRadius(radius), BorderThickness = new Thickness(1), BorderBrush = Stroke, Background = Surface };
-    private static TextBlock Label(string title, double size, bool strong = false, bool quiet = false) => new()
+    private StackPanel Metric(string name, string exact, int size) => new() { Spacing = 1, Children = { Label(name, 11, false, true), Label(exact, size, true) } };
+    private Border Panel(int radius) => new() { CornerRadius = new CornerRadius(radius), BorderThickness = new Thickness(1), BorderBrush = stroke, Background = surface };
+    private TextBlock Label(string title, double size, bool strong = false, bool subdued = false) => new()
     {
-        Text = title, FontSize = size, FontWeight = strong ? FontWeight.SemiBold : FontWeight.Normal, Foreground = quiet ? Quiet : Ink,
+        Text = title, FontSize = size, FontWeight = strong ? FontWeight.SemiBold : FontWeight.Normal, Foreground = subdued ? quiet : ink,
         VerticalAlignment = VerticalAlignment.Center, TextTrimming = TextTrimming.CharacterEllipsis, MaxLines = 1
     };
-    private static Button Control(string title) => new()
+    private Button Control(string title) => new()
     {
-        Content = title, FontSize = 12, Height = 27, Background = Brushes.Transparent, Foreground = Ink, Padding = new Thickness(2, 2),
+        Content = title, FontSize = 12, Height = 27, Background = Brushes.Transparent, Foreground = ink, Padding = new Thickness(2, 2),
         VerticalAlignment = VerticalAlignment.Center, HorizontalAlignment = HorizontalAlignment.Stretch, HorizontalContentAlignment = HorizontalAlignment.Center
     };
     private static void Put(Grid grid, Control control, int column) { Grid.SetColumn(control, column); grid.Children.Add(control); }

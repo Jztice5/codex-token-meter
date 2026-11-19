@@ -5,7 +5,7 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <LangVersion>latest</LangVersion>
     <AssemblyName>CodexTokenMeter</AssemblyName>
-    <Version>1.2.0</Version>
+    <Version>1.2.1</Version>
     <RuntimeIdentifiers>osx-arm64;osx-x64</RuntimeIdentifiers>
     <NuGetAudit>true</NuGetAudit>
   </PropertyGroup>
@@ -15,5 +15,6 @@
     <Compile Include="../codex-token-meter/Usage.cs" Link="Usage.cs" />
     <Compile Include="../codex-token-meter/Today.cs" Link="Today.cs" />
     <Compile Include="../codex-token-meter/Follow.cs" Link="Follow.cs" />
+    <Compile Include="../codex-token-meter/Appearance.cs" Link="Appearance.cs" />
   </ItemGroup>
 </Project>

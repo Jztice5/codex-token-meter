@@ -1,10 +1,14 @@
 using System;
+using System.Reflection;
 using System.Runtime.Versioning;
 using System.Threading;
 using System.Windows;
 using System.Windows.Interop;
 
 [assembly: TargetFramework(".NETFramework,Version=v4.8", FrameworkDisplayName = ".NET Framework 4.8")]
+[assembly: AssemblyTitle("Codex Token Meter")]
+[assembly: AssemblyVersion("1.2.1.0")]
+[assembly: AssemblyFileVersion("1.2.1.0")]
 
 namespace CodexTokenMeter
 {

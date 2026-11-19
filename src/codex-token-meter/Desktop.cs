@@ -85,6 +85,7 @@ namespace CodexTokenMeter
         }
 
         [DllImport("user32.dll")] internal static extern IntPtr GetForegroundWindow();
+        [DllImport("user32.dll")] private static extern IntPtr GetAncestor(IntPtr window, uint flags);
         [DllImport("user32.dll")] internal static extern bool GetWindowRect(IntPtr window, out Box box);
         [DllImport("user32.dll")] internal static extern bool GetCursorPos(out Point point);
         [DllImport("user32.dll")] internal static extern bool IsIconic(IntPtr window);
@@ -95,6 +96,20 @@ namespace CodexTokenMeter
         [DllImport("user32.dll")] private static extern IntPtr MonitorFromWindow(IntPtr window, uint flags);
         [DllImport("user32.dll")] private static extern bool GetMonitorInfo(IntPtr monitor, ref MonitorInfo info);
         [DllImport("user32.dll", CharSet = CharSet.Unicode)] private static extern int GetClassName(IntPtr window, System.Text.StringBuilder name, int capacity);
+
+        internal static IntPtr RootOwner(IntPtr window)
+        {
+            const uint rootOwner = 3;
+            return GetAncestor(window, rootOwner);
+        }
+
+        internal static bool SameProcess(IntPtr first, IntPtr second)
+        {
+            int firstId, secondId;
+            return GetWindowThreadProcessId(first, out firstId) != 0
+                && GetWindowThreadProcessId(second, out secondId) != 0
+                && firstId == secondId;
+        }
 
         internal static double Scale(IntPtr window)
         {
@@ -117,7 +132,7 @@ namespace CodexTokenMeter
             int pid;
             if (GetWindowThreadProcessId(window, out pid) == 0) return false;
             bool found;
-            if (CodexProcesses.TryGetValue(pid, out found)) return found;
+            if (CodexProcesses.TryGetValue(pid, out found)) return found && HasCodexWindowClass(window);
 
             try
             {
@@ -127,12 +142,9 @@ namespace CodexTokenMeter
                     if (name.Equals("ChatGPT", StringComparison.OrdinalIgnoreCase) || name.Equals("Codex", StringComparison.OrdinalIgnoreCase))
                     {
                         string executable = process.MainModule.FileName;
-                        var windowClass = new System.Text.StringBuilder(128);
-                        GetClassName(window, windowClass, windowClass.Capacity);
-                        found = windowClass.ToString().StartsWith("Chrome_WidgetWin_", StringComparison.Ordinal)
-                            && (executable.IndexOf("\\WindowsApps\\OpenAI.Codex_", StringComparison.OrdinalIgnoreCase) >= 0
-                                || executable.IndexOf("\\WindowsApps\\OpenAI.ChatGPT_", StringComparison.OrdinalIgnoreCase) >= 0
-                                || name.Equals("Codex", StringComparison.OrdinalIgnoreCase));
+                        found = executable.IndexOf("\\WindowsApps\\OpenAI.Codex_", StringComparison.OrdinalIgnoreCase) >= 0
+                            || executable.IndexOf("\\WindowsApps\\OpenAI.ChatGPT_", StringComparison.OrdinalIgnoreCase) >= 0
+                            || name.Equals("Codex", StringComparison.OrdinalIgnoreCase);
                     }
                 }
             }
@@ -142,7 +154,14 @@ namespace CodexTokenMeter
 
             if (CodexProcesses.Count >= 64) CodexProcesses.Clear();
             CodexProcesses[pid] = found;
-            return found;
+            return found && HasCodexWindowClass(window);
+        }
+
+        private static bool HasCodexWindowClass(IntPtr window)
+        {
+            var windowClass = new System.Text.StringBuilder(128);
+            GetClassName(window, windowClass, windowClass.Capacity);
+            return windowClass.ToString().StartsWith("Chrome_WidgetWin_", StringComparison.Ordinal);
         }
 
         internal static HostView Inspect(IntPtr host)

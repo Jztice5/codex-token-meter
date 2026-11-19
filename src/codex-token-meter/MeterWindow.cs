@@ -1,4 +1,5 @@
 using System;
+using System.Diagnostics;
 using System.Globalization;
 using System.IO;
 using System.Linq;
@@ -20,13 +21,16 @@ namespace CodexTokenMeter
     {
         private const double BarHeight = 38, PanelWidth = 349, ChatHeight = 225, DetailGap = 6;
         private const double ModelRowHeight = 27, ModelListMaxHeight = 146, TodayFixedHeight = 155;
+        private const int DragReleaseGraceMilliseconds = 750;
         private static readonly CultureInfo NumberCulture = CultureInfo.GetCultureInfo("zh-CN");
         private readonly MeterSettings settings;
         private readonly string codexHome;
+        private readonly CodexAppearance appearance;
         private readonly DispatcherTimer placementTimer, usageTimer, todayTimer;
         private readonly SessionTitles titles;
         private readonly TodayStore todayStore;
         private readonly Forms.NotifyIcon tray;
+        private readonly Stopwatch sinceDragRelease = new Stopwatch();
         private readonly Grid frame = new Grid();
         private readonly Border bar, detail, dot, cacheTrack, cacheFill;
         private readonly Border divider, detailRule;
@@ -48,6 +52,8 @@ namespace CodexTokenMeter
         private int dragX, dragY, dragWindowX, dragWindowY;
         private double cacheFraction;
         private Brush signal, quiet, ink, stroke, surface, track, hover;
+        private bool systemDark;
+        private bool? paintedDark;
 
         internal MeterWindow(string initialId, bool demo, MeterSettings testSettings = null)
         {
@@ -82,6 +88,11 @@ namespace CodexTokenMeter
             grip.DragStarted += BeginDrag;
             grip.DragDelta += MoveDrag;
             grip.DragCompleted += EndDrag;
+            var gripTemplate = new ControlTemplate(typeof(Thumb));
+            var clear = new FrameworkElementFactory(typeof(Border));
+            clear.SetValue(Border.BackgroundProperty, Brushes.Transparent);
+            gripTemplate.VisualTree = clear;
+            grip.Template = gripTemplate;
             AutomationProperties.SetName(grip, "拖动浮条");
             line.Children.Add(grip);
             var mark = Text("⠿", 15, false);
@@ -205,12 +216,13 @@ namespace CodexTokenMeter
             };
             PreviewKeyDown += HandleKeys;
             Closed += Cleanup;
-            SystemEvents.UserPreferenceChanged += OnThemeChanged;
-            RefreshTheme();
-            SizePanel(false);
 
             string configured = Environment.GetEnvironmentVariable("CODEX_HOME");
             codexHome = String.IsNullOrWhiteSpace(configured) ? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".codex") : configured;
+            appearance = new CodexAppearance(codexHome);
+            SystemEvents.UserPreferenceChanged += OnThemeChanged;
+            RefreshSystemTheme();
+            SizePanel(false);
             titles = new SessionTitles(codexHome);
             todayStore = new TodayStore(codexHome);
             if (!settings.Follow) ChangeSession(initialId ?? settings.SessionId);
@@ -219,7 +231,7 @@ namespace CodexTokenMeter
             placementTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(215) };
             placementTimer.Tick += async delegate { await RefreshPlacement(); };
             usageTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(430) };
-            usageTimer.Tick += async delegate { await RefreshUsage(); };
+            usageTimer.Tick += async delegate { RefreshTheme(); await RefreshUsage(); };
             todayTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(2) };
             todayTimer.Tick += async delegate { if (expanded && showToday && IsVisible) await RefreshToday(); };
             if (!demo)
@@ -272,20 +284,29 @@ namespace CodexTokenMeter
 
         private void OnThemeChanged(object sender, UserPreferenceChangedEventArgs e)
         {
-            if (!closed) Dispatcher.BeginInvoke(new Action(RefreshTheme));
+            if (!closed) Dispatcher.BeginInvoke(new Action(RefreshSystemTheme));
         }
 
-        private void RefreshTheme()
+        private void RefreshSystemTheme()
         {
             object lightSetting = Registry.GetValue(@"HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize", "AppsUseLightTheme", 1);
-            bool dark = lightSetting is int && (int)lightSetting == 0;
-            surface = Paint(dark ? "#202123" : "#FCFCFB");
-            ink = Paint(dark ? "#F0F2F4" : "#20262A");
-            quiet = Paint(dark ? "#AEB9C1" : "#52616A");
-            stroke = Paint(dark ? "#3E454A" : "#D9DFDE");
-            signal = Paint(dark ? "#5ACFB6" : "#047968");
-            track = Paint(dark ? "#303F3D" : "#DCE8E4");
-            hover = Paint(dark ? "#303735" : "#EAF2EF");
+            systemDark = lightSetting is int && (int)lightSetting == 0;
+            RefreshTheme(true);
+        }
+
+        private void RefreshTheme(bool force = false)
+        {
+            bool dark = appearance.ReadDarkPreference() ?? systemDark;
+            if (!force && paintedDark == dark) return;
+            paintedDark = dark;
+            MeterPalette palette = dark ? MeterPalette.Dark : MeterPalette.Light;
+            surface = Paint(palette.Surface);
+            ink = Paint(palette.Ink);
+            quiet = Paint(palette.Quiet);
+            stroke = Paint(palette.Stroke);
+            signal = Paint(palette.Signal);
+            track = Paint(palette.Track);
+            hover = Paint(palette.Hover);
             if (SystemParameters.HighContrast)
             {
                 surface = SystemColors.WindowBrush;
@@ -304,11 +325,6 @@ namespace CodexTokenMeter
             foreach (Button button in new[] { toggle, chatTab, todayTab }) button.Template = ButtonTemplate();
             toggle.Foreground = quiet;
             UpdateTabStyle();
-            var gripTemplate = new ControlTemplate(typeof(Thumb));
-            var clear = new FrameworkElementFactory(typeof(Border));
-            clear.SetValue(Border.BackgroundProperty, Brushes.Transparent);
-            gripTemplate.VisualTree = clear;
-            grip.Template = gripTemplate;
             UpdateUsage();
             UpdateToday();
         }
@@ -501,35 +517,8 @@ namespace CodexTokenMeter
         private async Task RefreshPlacement()
         {
             IntPtr foreground = Desktop.GetForegroundWindow();
-            if (foreground != handle && Desktop.IsCodex(foreground))
-            {
-                if (host != foreground)
-                {
-                    composer = Rect.Empty;
-                    nextProbe = DateTime.MinValue;
-                    observedTitle = selectedModel = followProblem = null;
-                    missedViews = 0;
-                    if (settings.Follow) ChangeSession(null);
-                }
-                host = foreground;
-            }
-            bool shouldShow = (host != IntPtr.Zero && foreground == host && !Desktop.IsIconic(host)) || IsActive || dragging || bar.ContextMenu.IsOpen;
-            if (!shouldShow)
-            {
-                if (IsVisible) Hide();
-                return;
-            }
-            if (host != IntPtr.Zero && !Desktop.IsWindow(host)) { host = IntPtr.Zero; composer = Rect.Empty; }
-            if (!IsVisible)
-            {
-                new WindowInteropHelper(this).EnsureHandle();
-                ApplyPlacement();
-                Show();
-            }
-            if (dragging) return;
-            ApplyPlacement();
-
-            if (probing || foreground != host || host == IntPtr.Zero || DateTime.UtcNow < nextProbe) return;
+            UpdatePlacement(foreground);
+            if (!IsVisible || dragging || probing || foreground != host || host == IntPtr.Zero || DateTime.UtcNow < nextProbe) return;
             IntPtr target = host;
             probing = true;
             nextProbe = DateTime.UtcNow.AddMilliseconds(625);
@@ -555,6 +544,50 @@ namespace CodexTokenMeter
                 ObserveHost(result.Item1, result.Item2);
             }
             finally { probing = false; }
+        }
+
+        private void UpdatePlacement(IntPtr foreground)
+        {
+            if (host != IntPtr.Zero && !Desktop.IsWindow(host))
+            {
+                host = IntPtr.Zero;
+                composer = Rect.Empty;
+            }
+
+            bool hasForeground = foreground != IntPtr.Zero;
+            bool hostHasFocus = hasForeground && host != IntPtr.Zero
+                && (foreground == host || Desktop.RootOwner(foreground) == host);
+            bool meterHasFocus = hasForeground && !hostHasFocus
+                && (foreground == handle || Desktop.SameProcess(foreground, handle));
+            if (hasForeground && !hostHasFocus && !meterHasFocus && Desktop.IsCodex(foreground))
+            {
+                host = foreground;
+                hostHasFocus = true;
+                composer = Rect.Empty;
+                nextProbe = DateTime.MinValue;
+                observedTitle = selectedModel = followProblem = null;
+                missedViews = 0;
+                if (settings.Follow) ChangeSession(null);
+            }
+            else if (hasForeground && host != IntPtr.Zero && !hostHasFocus && !meterHasFocus)
+            {
+                hostHasFocus = Desktop.SameProcess(foreground, host);
+            }
+
+            // Windows can report no foreground window briefly when the drag releases mouse capture.
+            bool releasingDrag = !hasForeground && IsVisible && sinceDragRelease.IsRunning
+                && sinceDragRelease.ElapsedMilliseconds < DragReleaseGraceMilliseconds;
+            bool hostInUse = host != IntPtr.Zero && !Desktop.IsIconic(host)
+                && (hostHasFocus || meterHasFocus || releasingDrag);
+            if (!hostInUse && !IsActive && !dragging && !bar.ContextMenu.IsOpen)
+            {
+                if (IsVisible) Hide();
+                return;
+            }
+
+            if (handle == IntPtr.Zero) new WindowInteropHelper(this).EnsureHandle();
+            ApplyPlacement();
+            if (!IsVisible) Show();
         }
 
         private void ObserveHost(HostView view, FollowResult match)
@@ -688,6 +721,7 @@ namespace CodexTokenMeter
                 settings.OffsetY = (barTop - anchor.Y) / scale;
                 settings.Save();
             }
+            sinceDragRelease.Restart();
             dragging = false;
             ApplyPlacement();
         }
