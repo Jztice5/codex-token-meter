@@ -1,0 +1,20 @@
+{
+  "name": "codex-token-meter-local",
+  "interface": {
+    "displayName": "Codex Token Meter 本地插件"
+  },
+  "plugins": [
+    {
+      "name": "codex-token-meter",
+      "source": {
+        "source": "local",
+        "path": "./plugins/codex-token-meter"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Productivity"
+    }
+  ]
+}

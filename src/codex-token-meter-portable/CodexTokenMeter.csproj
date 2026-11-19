@@ -1,0 +1,19 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <LangVersion>latest</LangVersion>
+    <AssemblyName>CodexTokenMeter</AssemblyName>
+    <Version>1.2.0</Version>
+    <RuntimeIdentifiers>osx-arm64;osx-x64</RuntimeIdentifiers>
+    <NuGetAudit>true</NuGetAudit>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Avalonia.Desktop" Version="12.1.6" />
+    <PackageReference Include="Avalonia.Themes.Fluent" Version="12.1.6" />
+    <Compile Include="../codex-token-meter/Usage.cs" Link="Usage.cs" />
+    <Compile Include="../codex-token-meter/Today.cs" Link="Today.cs" />
+    <Compile Include="../codex-token-meter/Follow.cs" Link="Follow.cs" />
+  </ItemGroup>
+</Project>

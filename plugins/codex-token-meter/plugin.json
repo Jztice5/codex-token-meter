@@ -1,0 +1,19 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "codex-token-meter",
+  "version": "1.2.0",
+  "description": "启动或检查显示 Codex 模型与 token 用量的本地浮条。",
+  "extensions": {
+    "com.openai": {
+      "onboardingSkill": "./skills/token-meter/SKILL.md",
+      "interface": {
+        "displayName": "Codex Token Meter",
+        "shortDescription": "启动 Codex 模型与用量浮条",
+        "longDescription": "在 Codex 输入框旁显示模型和会话用量。支持当前对话跟随、明细和北京时间今日统计。",
+        "category": "Productivity",
+        "defaultPrompt": ["启动 Codex Token Meter 浮条", "检查 Codex Token Meter 是否运行"],
+        "brandColor": "#047968"
+      }
+    }
+  }
+}
