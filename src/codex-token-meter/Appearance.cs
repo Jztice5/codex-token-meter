@@ -90,13 +90,13 @@ namespace CodexTokenMeter
     internal sealed class MeterPalette
     {
         internal static readonly MeterPalette Light = new MeterPalette(
-            "#FFFFFF", "#202124", "#52616A", "#D9DFDE", "#047968", "#DCE8E4", "#EAF2EF");
+            "#FFFFFF", "#202124", "#52616A", "#D9DFDE", "#047968", "#DCE8E4", "#EAF2EF", "#F3F5F5");
         internal static readonly MeterPalette Dark = new MeterPalette(
-            "#181818", "#F0F2F4", "#AEB9C1", "#393B3E", "#5ACFB6", "#303F3D", "#303735");
+            "#181818", "#F0F2F4", "#AEB9C1", "#393B3E", "#5ACFB6", "#303F3D", "#303735", "#222425");
 
-        internal readonly string Surface, Ink, Quiet, Stroke, Signal, Track, Hover;
+        internal readonly string Surface, Ink, Quiet, Stroke, Signal, Track, Hover, Inset;
 
-        private MeterPalette(string surface, string ink, string quiet, string stroke, string signal, string track, string hover)
+        private MeterPalette(string surface, string ink, string quiet, string stroke, string signal, string track, string hover, string inset)
         {
             Surface = surface;
             Ink = ink;
@@ -105,6 +105,21 @@ namespace CodexTokenMeter
             Signal = signal;
             Track = track;
             Hover = hover;
+            Inset = inset;
+        }
+    }
+
+    internal static class MeterLayout
+    {
+        internal const string ChevronDown = "M 1.5,2.75 L 5,6.25 L 8.5,2.75";
+        internal const string ChevronUp = "M 1.5,6.25 L 5,2.75 L 8.5,6.25";
+        internal const double ChevronWidth = 10, ChevronHeight = 9;
+        internal const double StatusDotSize = 6;
+
+        internal static double? CacheShare(TokenCounts counts)
+        {
+            if (counts == null || !counts.Cached.HasValue || counts.Input.GetValueOrDefault() <= 0) return null;
+            return Math.Max(0, Math.Min(1, (double)counts.Cached.Value / counts.Input.Value));
         }
     }
 }

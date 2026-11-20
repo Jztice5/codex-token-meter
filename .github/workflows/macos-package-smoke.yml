@@ -1,0 +1,119 @@
+name: macOS package smoke test
+
+on:
+  push:
+    branches: ["**"]
+    paths:
+      - ".github/workflows/macos-package-smoke.yml"
+      - "plugins/codex-token-meter/assets/CodexTokenMeter-macOS-*.zip"
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    name: macOS / ${{ matrix.arch }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15
+            arch: arm64
+            asset: CodexTokenMeter-macOS-AppleSilicon.zip
+          - runner: macos-15-intel
+            arch: x86_64
+            asset: CodexTokenMeter-macOS-Intel.zip
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Verify and run the packaged app
+        env:
+          PACKAGE: ${{ matrix.asset }}
+          EXPECTED_ARCH: ${{ matrix.arch }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$(uname -m)" == "$EXPECTED_ARCH" ]]
+          assets="$PWD/plugins/codex-token-meter/assets"
+          (cd "$assets" && shasum -a 256 -c sha256.txt)
+          scratch="$(mktemp -d)"
+          preview_pid=
+          trap 'if [[ -n "$preview_pid" ]]; then kill "$preview_pid" 2>/dev/null || true; fi' EXIT
+          ditto -x -k "$assets/$PACKAGE" "$scratch"
+          bundle="$scratch/Codex Token Meter.app"
+          executable="$bundle/Contents/MacOS/CodexTokenMeter"
+          [[ "$(lipo -archs "$executable")" == "$EXPECTED_ARCH" ]]
+          codesign --verify --deep --strict --verbose=2 "$bundle"
+          version="$(python3 -c 'import json; print(json.load(open("plugins/codex-token-meter/plugin.json"))["version"])')"
+          [[ "$(/usr/libexec/PlistBuddy -c 'Print CFBundleShortVersionString' "$bundle/Contents/Info.plist")" == "$version" ]]
+
+          fixture="$scratch/codex"
+          mkdir -p "$fixture/sessions"
+          python3 - "$fixture" <<'PY'
+          import datetime
+          import json
+          import pathlib
+          import sys
+
+          now = datetime.datetime.now(datetime.timezone.utc).isoformat()
+          counts = {"total_tokens": 42, "input_tokens": 40, "output_tokens": 2,
+                    "cached_input_tokens": 24, "reasoning_output_tokens": 1}
+          rows = [
+              ("turn_context", {"turn_id": "smoke", "model": "fixture-model"}),
+              ("token_usage_record", {"turn_id": "smoke", "response_id": "fixture-request",
+                                     "usage": counts, "thread_token_usage": counts}),
+          ]
+          path = pathlib.Path(sys.argv[1]) / "sessions" / "rollout-smoke-67297b64-ae47-4a1d-a841-16b18e5e01a9.jsonl"
+          path.write_text("".join(json.dumps({"timestamp": now, "type": kind, "payload": payload}) + "\n"
+                                  for kind, payload in rows), encoding="utf-8")
+          PY
+          "$executable" --check-data "$fixture" > "$scratch/usage.json"
+          python3 - "$scratch/usage.json" <<'PY'
+          import json
+          import sys
+
+          with open(sys.argv[1], encoding="utf-8") as data:
+              usage = json.load(data)
+          assert usage["Total"] == 42 and usage["Models"] == {"fixture-model": 42} and not usage["Partial"], usage
+          PY
+
+          cat > "$scratch/check-window.swift" <<'SWIFT'
+          import CoreGraphics
+          import Foundation
+
+          let pid = Int(CommandLine.arguments[1])!
+          for _ in 0..<40 {
+              let windows = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID)
+                  as? [[String: Any]] ?? []
+              for window in windows {
+                  guard window[kCGWindowOwnerPID as String] as? Int == pid,
+                        let coordinates = window[kCGWindowBounds as String] as? [String: Any],
+                        let bounds = CGRect(dictionaryRepresentation: coordinates as CFDictionary) else { continue }
+                  if bounds.width >= 330 && bounds.width <= 360 && bounds.height >= 280 && bounds.height <= 330 {
+                      print("Meter preview window: \(bounds.width) × \(bounds.height) points")
+                      exit(0)
+                  }
+              }
+              Thread.sleep(forTimeInterval: 0.25)
+          }
+          print("The expected macOS meter preview did not appear")
+          exit(1)
+          SWIFT
+          swiftc "$scratch/check-window.swift" -o "$scratch/check-window"
+          for mode in light dark; do
+            printf '[desktop]\nappearanceTheme = "%s"\n' "$mode" > "$fixture/config.toml"
+            CODEX_HOME="$fixture" "$executable" --preview > "$scratch/preview-$mode.log" 2>&1 &
+            preview_pid=$!
+            if ! "$scratch/check-window" "$preview_pid"; then
+              cat "$scratch/preview-$mode.log"
+              exit 1
+            fi
+            kill "$preview_pid"
+            wait "$preview_pid" || true
+            preview_pid=
+            printf 'PASS %s macOS %s preview\n' "$EXPECTED_ARCH" "$mode"
+          done

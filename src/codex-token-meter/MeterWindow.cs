@@ -7,20 +7,25 @@ using System.Windows;
 using System.Windows.Automation;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
+using System.Windows.Data;
 using System.Windows.Input;
 using System.Windows.Interop;
 using System.Windows.Media;
 using System.Windows.Threading;
 using Microsoft.Win32;
 using Forms = System.Windows.Forms;
+using ShapeEllipse = System.Windows.Shapes.Ellipse;
+using ShapePath = System.Windows.Shapes.Path;
 
 namespace CodexTokenMeter
 {
     internal sealed class MeterWindow : Window
     {
-        private const double BarHeight = 38, PanelWidth = 349, ChatHeight = 225, DetailGap = 6;
-        private const double ModelRowHeight = 27, ModelListMaxHeight = 146, TodayFixedHeight = 155;
+        private const double BarHeight = 38, PanelWidth = 349, ChatHeight = 256, DetailGap = 6;
+        private const double ModelRowHeight = 30, ModelListMaxHeight = 150, TodayFixedHeight = 157;
         private static readonly CultureInfo NumberCulture = CultureInfo.GetCultureInfo("zh-CN");
+        private static readonly FontFamily NumberFont = new FontFamily("Cascadia Mono, Consolas");
+        private static readonly Geometry ChevronDown = Geometry.Parse(MeterLayout.ChevronDown), ChevronUp = Geometry.Parse(MeterLayout.ChevronUp);
         private readonly MeterSettings settings;
         private readonly string codexHome;
         private readonly CodexAppearance appearance;
@@ -29,11 +34,13 @@ namespace CodexTokenMeter
         private readonly TodayStore todayStore;
         private readonly Forms.NotifyIcon tray;
         private readonly Grid frame = new Grid();
-        private readonly Border bar, detail, dot, cacheTrack, cacheFill;
-        private readonly Border divider, detailRule;
+        private readonly Border bar, detail, cacheTrack, cacheFill;
+        private readonly ShapeEllipse dot;
+        private readonly Border divider, detailRule, tabRail;
         private readonly Button toggle, chatTab, todayTab;
+        private readonly ShapePath chevron;
         private readonly Thumb grip;
-        private readonly TextBlock model, smallTotal, total, last, input, output, cached, reasoning, status, todayTotal, todayNote;
+        private readonly TextBlock model, smallTotal, total, last, input, output, cached, reasoning, status, todayTotal, todayNote, cacheRatio;
         private readonly TextBlock[] quietLabels;
         private readonly StackPanel chatBody, todayBody, modelRows;
         private SessionBinding session;
@@ -48,7 +55,7 @@ namespace CodexTokenMeter
         private DateTime nextProbe;
         private int dragX, dragY, dragWindowX, dragWindowY;
         private double cacheFraction;
-        private Brush signal, quiet, ink, stroke, surface, track, hover;
+        private Brush signal, quiet, ink, stroke, surface, track, hover, inset;
         private bool systemDark;
         private bool? paintedDark;
 
@@ -74,13 +81,13 @@ namespace CodexTokenMeter
             frame.RowDefinitions.Add(new RowDefinition());
 
             bar = Surface(10);
-            var line = new Grid { Margin = new Thickness(2, 0, 4, 0) };
-            line.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(24) });
-            line.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(15) });
+            var line = new Grid { Margin = new Thickness(3, 0, 6, 0) };
+            line.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(26) });
+            line.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(13) });
             line.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
             line.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1) });
-            line.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(86) });
-            line.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(60) });
+            line.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(102) });
+            line.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(62) });
             grip = new Thumb { Cursor = Cursors.SizeAll, Focusable = false, ToolTip = "拖动浮条 · 右键打开菜单" };
             grip.DragStarted += BeginDrag;
             grip.DragDelta += MoveDrag;
@@ -96,17 +103,38 @@ namespace CodexTokenMeter
             mark.HorizontalAlignment = HorizontalAlignment.Center;
             mark.IsHitTestVisible = false;
             line.Children.Add(mark);
-            dot = new Border { Width = 6, Height = 6, CornerRadius = new CornerRadius(3), VerticalAlignment = VerticalAlignment.Center, HorizontalAlignment = HorizontalAlignment.Center };
+            dot = new ShapeEllipse
+            {
+                Width = MeterLayout.StatusDotSize, Height = MeterLayout.StatusDotSize,
+                VerticalAlignment = VerticalAlignment.Center, HorizontalAlignment = HorizontalAlignment.Center
+            };
             Put(line, dot, 1);
             model = Text("等待会话", 13, true);
             model.Margin = new Thickness(2, 0, 5, 0);
+            // Segoe UI's visible glyphs sit one DIP below the centered line box at this size.
+            model.RenderTransform = new TranslateTransform(0, -1);
             Put(line, model, 2);
             divider = new Border { Margin = new Thickness(0, 9, 0, 9) };
             Put(line, divider, 3);
-            smallTotal = Text("—", 12, true);
-            smallTotal.HorizontalAlignment = HorizontalAlignment.Center;
-            Put(line, smallTotal, 4);
-            toggle = new Button { Height = 29, Padding = new Thickness(2, 0, 2, 0), Cursor = Cursors.Hand, Content = "明细  ⌄", FontSize = 12, Background = Brushes.Transparent };
+            smallTotal = Number("—", 14);
+            var unit = Text("token", 10, false);
+            unit.Margin = new Thickness(5, 1, 0, 0);
+            var barCount = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Center };
+            barCount.Children.Add(smallTotal);
+            barCount.Children.Add(unit);
+            Put(line, barCount, 4);
+            chevron = new ShapePath
+            {
+                Width = MeterLayout.ChevronWidth, Height = MeterLayout.ChevronHeight, Data = ChevronDown,
+                StrokeThickness = 1.35, StrokeStartLineCap = PenLineCap.Round, StrokeEndLineCap = PenLineCap.Round,
+                StrokeLineJoin = PenLineJoin.Round, Stretch = Stretch.None, VerticalAlignment = VerticalAlignment.Center,
+                Margin = new Thickness(6, 0, 0, 0), IsHitTestVisible = false
+            };
+            var detailsLabel = new StackPanel { Orientation = Orientation.Horizontal };
+            detailsLabel.Children.Add(Text("明细", 12, true));
+            detailsLabel.Children.Add(chevron);
+            toggle = new Button { Height = 26, Cursor = Cursors.Hand, Content = detailsLabel };
+            chevron.SetBinding(ShapePath.StrokeProperty, new Binding("Foreground") { Source = toggle });
             AutomationProperties.SetName(toggle, "展开用量明细");
             toggle.Click += delegate { SetExpanded(!expanded); };
             Put(line, toggle, 5);
@@ -114,65 +142,84 @@ namespace CodexTokenMeter
             frame.Children.Add(bar);
 
             detail = Surface(12);
-            var body = new StackPanel { Margin = new Thickness(14, 9, 14, 10) };
+            var body = new StackPanel { Margin = new Thickness(14, 10, 14, 10) };
             var tabs = Columns();
-            tabs.Margin = new Thickness(0, 0, 0, 10);
             chatTab = new Button { Content = "当前对话", Cursor = Cursors.Hand, Height = 26 };
             todayTab = new Button { Content = "今日用量", Cursor = Cursors.Hand, Height = 26 };
-            chatTab.Margin = new Thickness(0, 0, 4, 0);
-            todayTab.Margin = new Thickness(4, 0, 0, 0);
+            chatTab.Margin = new Thickness(0, 0, 1, 0);
+            todayTab.Margin = new Thickness(1, 0, 0, 0);
             chatTab.Click += delegate { SetView(false); };
             todayTab.Click += delegate { SetView(true); };
             tabs.Children.Add(chatTab);
             Put(tabs, todayTab, 1);
-            body.Children.Add(tabs);
+            tabRail = new Border
+            {
+                CornerRadius = new CornerRadius(8), Child = tabs,
+                Padding = new Thickness(3), Margin = new Thickness(0, 0, 0, 11)
+            };
+            body.Children.Add(tabRail);
 
             chatBody = new StackPanel();
             body.Children.Add(chatBody);
-            var summary = Columns();
+            var summary = Columns(3, 2);
             var totalsLabel = Text("会话累计", 11, false);
-            var lastLabel = Text("最近一次模型请求", 11, false);
-            total = Text("—", 22, true);
-            last = Text("—", 22, true);
+            var lastLabel = Text("最近一次请求", 11, false);
+            total = Number("—", 25);
+            last = Number("—", 17);
             summary.Children.Add(Metric(totalsLabel, total));
-            Put(summary, Metric(lastLabel, last), 1);
+            var lastMetric = Metric(lastLabel, last);
+            lastMetric.VerticalAlignment = VerticalAlignment.Bottom;
+            Put(summary, lastMetric, 1);
             chatBody.Children.Add(summary);
-            detailRule = new Border { Height = 1, Margin = new Thickness(0, 8, 0, 7) };
+            detailRule = new Border { Height = 1, Margin = new Thickness(0, 8, 0, 8) };
             chatBody.Children.Add(detailRule);
 
             var metrics = Columns();
             var inputLabel = Text("输入", 11, false);
-            var cacheLabel = Text("其中缓存输入", 11, false);
+            var cacheLabel = Text("其中缓存", 11, false);
             var outputLabel = Text("输出", 11, false);
-            var reasoningLabel = Text("推理", 11, false);
-            input = Text("—", 14, true);
-            cached = Text("—", 14, true);
-            output = Text("—", 14, true);
-            reasoning = Text("—", 14, true);
+            var reasoningLabel = Text("其中推理", 11, false);
+            input = Number("—", 16);
+            cached = Number("—", 13);
+            output = Number("—", 16);
+            reasoning = Number("—", 13);
             metrics.Children.Add(Metric(inputLabel, input));
-            var cacheBlock = Metric(cacheLabel, cached);
-            cacheFill = new Border { Height = 4, HorizontalAlignment = HorizontalAlignment.Left, CornerRadius = new CornerRadius(2) };
-            cacheTrack = new Border { Height = 4, Margin = new Thickness(0, 2, 0, 0), CornerRadius = new CornerRadius(2), Child = cacheFill, ClipToBounds = true };
-            cacheTrack.SizeChanged += delegate { ResizeCacheMark(); };
-            cacheBlock.Children.Add(cacheTrack);
-            Put(metrics, cacheBlock, 1);
+            Put(metrics, Metric(outputLabel, output), 1);
             var lowerMetrics = Columns();
             lowerMetrics.Margin = new Thickness(0, 5, 0, 0);
-            lowerMetrics.Children.Add(Metric(outputLabel, output));
+            lowerMetrics.Children.Add(Metric(cacheLabel, cached));
             Put(lowerMetrics, Metric(reasoningLabel, reasoning), 1);
             chatBody.Children.Add(metrics);
             chatBody.Children.Add(lowerMetrics);
+
+            var cacheLabelLine = new DockPanel { Margin = new Thickness(0, 8, 0, 3), LastChildFill = true };
+            cacheRatio = Number("—", 11);
+            cacheRatio.HorizontalAlignment = HorizontalAlignment.Right;
+            DockPanel.SetDock(cacheRatio, Dock.Right);
+            cacheLabelLine.Children.Add(cacheRatio);
+            var cacheShareLabel = Text("缓存输入占比", 11, false);
+            cacheLabelLine.Children.Add(cacheShareLabel);
+            chatBody.Children.Add(cacheLabelLine);
+            cacheFill = new Border { Height = 4, HorizontalAlignment = HorizontalAlignment.Left, CornerRadius = new CornerRadius(2) };
+            cacheTrack = new Border { Height = 4, CornerRadius = new CornerRadius(2), Child = cacheFill, ClipToBounds = true };
+            cacheTrack.SizeChanged += delegate { ResizeCacheMark(); };
+            chatBody.Children.Add(cacheTrack);
             status = Text("等待本地会话", 11, false);
-            status.Margin = new Thickness(0, 7, 0, 0);
+            status.Margin = new Thickness(0, 8, 0, 0);
             chatBody.Children.Add(status);
 
             todayBody = new StackPanel { Visibility = Visibility.Collapsed };
             var todayLabel = Text("今日总用量", 11, false);
-            todayTotal = Text("—", 24, true);
+            todayTotal = Number("—", 25);
+            var todayUnit = Text("token", 11, false);
+            todayUnit.Margin = new Thickness(6, 6, 0, 0);
+            var todayAmount = new StackPanel { Orientation = Orientation.Horizontal };
+            todayAmount.Children.Add(todayTotal);
+            todayAmount.Children.Add(todayUnit);
             todayNote = Text("北京时间 00:00 起 · 本机 · 含缓存输入", 11, false);
             todayNote.Margin = new Thickness(0, 2, 0, 0);
             todayBody.Children.Add(todayLabel);
-            todayBody.Children.Add(todayTotal);
+            todayBody.Children.Add(todayAmount);
             todayBody.Children.Add(todayNote);
             var modelHeading = Text("按模型", 11, true);
             modelHeading.Margin = new Thickness(0, 13, 0, 4);
@@ -184,7 +231,7 @@ namespace CodexTokenMeter
             body.Children.Add(todayBody);
             detail.Child = body;
             frame.Children.Add(detail);
-            quietLabels = new[] { mark, totalsLabel, lastLabel, inputLabel, cacheLabel, outputLabel, reasoningLabel, status, todayLabel, todayNote, modelHeading };
+            quietLabels = new[] { mark, unit, totalsLabel, lastLabel, inputLabel, cacheLabel, outputLabel, reasoningLabel, cacheShareLabel, status, todayLabel, todayUnit, todayNote, modelHeading };
 
             bar.ContextMenu = new ContextMenu();
             AddMenuItem("自动跟随当前对话", EnableFollow);
@@ -250,11 +297,18 @@ namespace CodexTokenMeter
                 TextTrimming = TextTrimming.CharacterEllipsis, VerticalAlignment = VerticalAlignment.Center };
         }
 
-        private static Grid Columns()
+        private static TextBlock Number(string value, double size)
+        {
+            var number = Text(value, size, true);
+            number.FontFamily = NumberFont;
+            return number;
+        }
+
+        private static Grid Columns(double left = 1, double right = 1)
         {
             var grid = new Grid();
-            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(left, GridUnitType.Star) });
+            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(right, GridUnitType.Star) });
             return grid;
         }
 
@@ -268,7 +322,11 @@ namespace CodexTokenMeter
         {
             var metric = new StackPanel { Margin = new Thickness(0, 0, 10, 0) };
             metric.Children.Add(label);
-            metric.Children.Add(value);
+            metric.Children.Add(new Viewbox
+            {
+                Child = value, Stretch = Stretch.Uniform, StretchDirection = StretchDirection.DownOnly,
+                HorizontalAlignment = HorizontalAlignment.Left
+            });
             return metric;
         }
 
@@ -304,19 +362,23 @@ namespace CodexTokenMeter
             signal = Paint(palette.Signal);
             track = Paint(palette.Track);
             hover = Paint(palette.Hover);
+            inset = Paint(palette.Inset);
             if (SystemParameters.HighContrast)
             {
                 surface = SystemColors.WindowBrush;
                 ink = quiet = stroke = SystemColors.WindowTextBrush;
                 signal = hover = SystemColors.HighlightBrush;
-                track = SystemColors.ControlBrush;
+                track = inset = SystemColors.ControlBrush;
             }
 
             bar.Background = detail.Background = surface;
             bar.BorderBrush = detail.BorderBrush = stroke;
             divider.Background = detailRule.Background = stroke;
+            tabRail.Background = inset;
+            toggle.Background = inset;
+            toggle.BorderBrush = stroke;
             foreach (TextBlock label in quietLabels) label.Foreground = quiet;
-            foreach (TextBlock value in new[] { model, smallTotal, total, last, input, cached, output, reasoning, todayTotal }) value.Foreground = ink;
+            foreach (TextBlock value in new[] { model, smallTotal, total, last, input, cached, output, reasoning, todayTotal, cacheRatio }) value.Foreground = ink;
             cacheTrack.Background = track;
             cacheFill.Background = signal;
             foreach (Button button in new[] { toggle, chatTab, todayTab }) button.Template = ButtonTemplate();
@@ -331,6 +393,7 @@ namespace CodexTokenMeter
             var template = new ControlTemplate(typeof(Button));
             var chrome = new FrameworkElementFactory(typeof(Border), "Chrome");
             chrome.SetValue(Border.BackgroundProperty, new TemplateBindingExtension(BackgroundProperty));
+            chrome.SetValue(Border.BorderBrushProperty, new TemplateBindingExtension(BorderBrushProperty));
             chrome.SetValue(Border.BorderThicknessProperty, new Thickness(1));
             chrome.SetValue(Border.CornerRadiusProperty, new CornerRadius(6));
             var content = new FrameworkElementFactory(typeof(ContentPresenter));
@@ -340,6 +403,7 @@ namespace CodexTokenMeter
             template.VisualTree = chrome;
             var over = new Trigger { Property = IsMouseOverProperty, Value = true };
             over.Setters.Add(new Setter(Border.BackgroundProperty, hover, "Chrome"));
+            if (SystemParameters.HighContrast) over.Setters.Add(new Setter(ForegroundProperty, SystemColors.HighlightTextBrush));
             template.Triggers.Add(over);
             var focus = new Trigger { Property = IsKeyboardFocusedProperty, Value = true };
             focus.Setters.Add(new Setter(Border.BorderBrushProperty, signal, "Chrome"));
@@ -396,20 +460,20 @@ namespace CodexTokenMeter
             string currentModel = visibleModel ?? runtimeModel;
             model.Text = currentModel != null ? ModelLabel(currentModel) : session == null ? (settings.Follow ? "等待当前对话" : "未绑定对话") : "等待模型";
             model.ToolTip = followProblem ?? currentModel ?? StatusText(reading);
-            smallTotal.Text = counts == null ? "— token" : Compact(counts.Total) + " token";
+            smallTotal.Text = counts == null ? "—" : Compact(counts.Total);
             smallTotal.ToolTip = counts == null ? null : "会话累计 " + Exact(counts.Total) + " token";
             AutomationProperties.SetName(smallTotal, smallTotal.ToolTip as string ?? "等待 token 用量");
-            dot.Background = counts != null && readError == null ? signal : stroke;
+            dot.Fill = counts != null && readError == null ? signal : stroke;
             total.Text = Exact(counts == null ? (long?)null : counts.Total);
             last.Text = Exact(reading == null || reading.Last == null ? (long?)null : reading.Last.Total);
             input.Text = Exact(counts == null ? (long?)null : counts.Input);
             output.Text = Exact(counts == null ? (long?)null : counts.Output);
             cached.Text = Exact(counts == null ? (long?)null : counts.Cached);
             reasoning.Text = Exact(counts == null ? (long?)null : counts.Reasoning);
-            bool hasCacheRatio = counts != null && counts.Input.GetValueOrDefault() > 0 && counts.Cached.HasValue;
-            cacheFraction = hasCacheRatio ? Math.Min(1, (double)counts.Cached.Value / counts.Input.Value) : 0;
+            double? cacheShare = MeterLayout.CacheShare(counts);
+            cacheFraction = cacheShare.GetValueOrDefault();
+            cacheRatio.Text = cacheShare.HasValue ? cacheShare.Value.ToString("P1", NumberCulture) : "—";
             ResizeCacheMark();
-            cacheTrack.ToolTip = hasCacheRatio ? "缓存输入占比 " + cacheFraction.ToString("P1", NumberCulture) : null;
             status.Text = StatusText(reading);
             status.ToolTip = sessionId == null ? status.Text : status.Text + "\n会话 ID " + sessionId;
         }
@@ -457,9 +521,9 @@ namespace CodexTokenMeter
         private void UpdateToday()
         {
             modelRows.Children.Clear();
-            todayTotal.Text = todaySnapshot == null ? "—" : Exact(todaySnapshot.Total) + " token";
+            todayTotal.Text = todaySnapshot == null ? "—" : Exact(todaySnapshot.Total);
             todayNote.Text = todayUnavailable || (todaySnapshot != null && todaySnapshot.Partial)
-                ? "北京时间 00:00 起 · 部分用量缺失" : "北京时间 00:00 起 · 本机 · 含缓存输入";
+                ? "北京时间 00:00 起 · 部分用量缺失" : "北京时间 00:00 起 · 本机记录";
             if (showToday && expanded)
             {
                 if (host == IntPtr.Zero) SizePanel(false);
@@ -481,7 +545,7 @@ namespace CodexTokenMeter
                 name.Foreground = ink;
                 name.ToolTip = name.Text;
                 name.Margin = new Thickness(0, 0, 8, 0);
-                var value = Text(Exact(entry.Value), 12, true);
+                var value = Number(Exact(entry.Value), 13);
                 value.Foreground = ink;
                 value.Margin = new Thickness(0, 0, 4, 0);
                 row.Children.Add(name);
@@ -494,8 +558,10 @@ namespace CodexTokenMeter
         {
             chatTab.Background = showToday ? Brushes.Transparent : hover;
             todayTab.Background = showToday ? hover : Brushes.Transparent;
-            chatTab.Foreground = showToday ? quiet : ink;
-            todayTab.Foreground = showToday ? ink : quiet;
+            Brush activeInk = SystemParameters.HighContrast ? SystemColors.HighlightTextBrush : ink;
+            chatTab.Foreground = showToday ? quiet : activeInk;
+            todayTab.Foreground = showToday ? activeInk : quiet;
+            chatTab.BorderBrush = todayTab.BorderBrush = Brushes.Transparent;
             AutomationProperties.SetItemStatus(chatTab, showToday ? "" : "已选中");
             AutomationProperties.SetItemStatus(todayTab, showToday ? "已选中" : "");
         }
@@ -679,7 +745,7 @@ namespace CodexTokenMeter
         internal void SetExpanded(bool value)
         {
             expanded = value;
-            toggle.Content = expanded ? "明细  ⌃" : "明细  ⌄";
+            chevron.Data = expanded ? ChevronUp : ChevronDown;
             AutomationProperties.SetName(toggle, expanded ? "收起用量明细" : "展开用量明细");
             if (host == IntPtr.Zero) SizePanel(false);
             else ApplyPlacement();

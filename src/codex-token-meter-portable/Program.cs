@@ -12,6 +12,8 @@ using Avalonia.Media;
 using Avalonia.Styling;
 using Avalonia.Themes.Fluent;
 using Avalonia.Threading;
+using ShapeEllipse = Avalonia.Controls.Shapes.Ellipse;
+using ShapePath = Avalonia.Controls.Shapes.Path;
 
 namespace CodexTokenMeter;
 
@@ -101,10 +103,14 @@ internal sealed class Preferences
 internal sealed class Meter
 {
     private const double Width = 349, BarHeight = 38, Gap = 6;
+    private const double ChatHeight = 256, TodayFixedHeight = 157, ModelRowHeight = 30, ModelListHeight = 150;
     private const int DragReleaseGraceMilliseconds = 1200;
     private static readonly CultureInfo Digits = CultureInfo.GetCultureInfo("en-US");
+    private static readonly FontFamily NumberFont = new("Menlo, Cascadia Mono, Consolas");
+    private static readonly Geometry ChevronDown = Geometry.Parse(MeterLayout.ChevronDown), ChevronUp = Geometry.Parse(MeterLayout.ChevronUp);
 
-    private readonly SolidColorBrush surface = new(), stroke = new(), quiet = new(), ink = new(), accent = new(), selected = new();
+    private readonly SolidColorBrush surface = new(), stroke = new(), quiet = new(), ink = new(), accent = new(),
+        selected = new(), inset = new(), track = new();
     private readonly Application app;
     private readonly IClassicDesktopStyleApplicationLifetime lifetime;
     private readonly bool preview;
@@ -117,9 +123,14 @@ internal sealed class Meter
     private readonly StackPanel stack = new() { Spacing = Gap };
     private readonly Border bar, details;
     private readonly TextBlock model, smallTotal, status;
-    private readonly Border dot = new() { Width = 6, Height = 6, CornerRadius = new CornerRadius(3), VerticalAlignment = VerticalAlignment.Center };
+    private readonly ShapeEllipse dot = new()
+    {
+        Width = MeterLayout.StatusDotSize, Height = MeterLayout.StatusDotSize,
+        VerticalAlignment = VerticalAlignment.Center, HorizontalAlignment = HorizontalAlignment.Center
+    };
     private readonly Button toggle, chatTab, todayTab;
-    private readonly StackPanel mainPanel = new() { Spacing = 10 };
+    private readonly ShapePath chevron;
+    private readonly StackPanel mainPanel = new() { Spacing = 8 };
     private readonly DispatcherTimer timer;
     private readonly TrayIcon tray;
     private SessionBinding binding;
@@ -147,8 +158,22 @@ internal sealed class Meter
         titles = new SessionTitles(home);
         today = new TodayStore(home);
         (bar, details) = (Panel(10), Panel(12));
-        (model, smallTotal, status) = (Label("等待模型", 13, true), Label("— token", 12, true), Label("", 11, subdued: true));
-        (toggle, chatTab, todayTab) = (Control("明细  ⌄"), Control("当前对话"), Control("今日用量"));
+        (model, smallTotal, status) = (Label("等待模型", 13, true), NumberLabel("—", 14), Label("", 11, subdued: true));
+        chevron = new ShapePath
+        {
+            Width = MeterLayout.ChevronWidth, Height = MeterLayout.ChevronHeight, Data = ChevronDown,
+            Stroke = quiet, StrokeThickness = 1.35, StrokeLineCap = PenLineCap.Round, StrokeJoin = PenLineJoin.Round,
+            Stretch = Stretch.None, VerticalAlignment = VerticalAlignment.Center, IsHitTestVisible = false
+        };
+        var detailsLabel = new StackPanel
+        {
+            Orientation = Orientation.Horizontal, Spacing = 6, Children = { Label("明细", 12, true, true), chevron }
+        };
+        (toggle, chatTab, todayTab) = (Control(detailsLabel), Control("当前对话"), Control("今日用量"));
+        toggle.Background = inset;
+        toggle.BorderBrush = stroke;
+        toggle.BorderThickness = new Thickness(1);
+        AutomationProperties.SetName(toggle, "展开用量明细");
         window = new Window
         {
             Title = "Codex Token Meter", Width = Width, Height = BarHeight, CanResize = false,
@@ -195,6 +220,8 @@ internal sealed class Meter
         ink.Color = Color.Parse(palette.Ink);
         accent.Color = Color.Parse(palette.Signal);
         selected.Color = Color.Parse(palette.Hover);
+        inset.Color = Color.Parse(palette.Inset);
+        track.Color = Color.Parse(palette.Track);
     }
 
     internal void Start()
@@ -244,11 +271,12 @@ internal sealed class Meter
     {
         stack.Children.Add(bar);
         stack.Children.Add(details);
-        var row = new Grid { ColumnDefinitions = new ColumnDefinitions("24,15,*,1,86,60"), Margin = new Thickness(3, 0, 5, 0), Height = BarHeight - 2 };
+        var row = new Grid { ColumnDefinitions = new ColumnDefinitions("26,13,*,1,102,62"), Margin = new Thickness(3, 0, 6, 0), Height = BarHeight - 2 };
         var grip = Label("⠿", 15, false, true);
         grip.Cursor = new Cursor(StandardCursorType.SizeAll);
         grip.HorizontalAlignment = HorizontalAlignment.Stretch;
         grip.TextAlignment = TextAlignment.Center;
+        AutomationProperties.SetName(grip, "拖动浮条");
         ToolTip.SetTip(grip, "拖动浮条");
         grip.PointerPressed += (_, e) =>
         {
@@ -277,19 +305,20 @@ internal sealed class Meter
         Put(row, dot, 1);
         Put(row, model, 2);
         Put(row, new Border { Background = stroke, Margin = new Thickness(0, 8) }, 3);
-        smallTotal.HorizontalAlignment = HorizontalAlignment.Center;
-        Put(row, smallTotal, 4);
+        var barCount = AmountWithUnit(smallTotal, 10, 1);
+        barCount.HorizontalAlignment = HorizontalAlignment.Center;
+        Put(row, barCount, 4);
         toggle.Click += (_, _) => SetExpanded(!expanded);
         Put(row, toggle, 5);
         bar.Child = row;
 
-        var body = new StackPanel { Spacing = 10, Margin = new Thickness(14, 9, 14, 12) };
-        var tabs = new Grid { ColumnDefinitions = new ColumnDefinitions("*,8,*") };
+        var body = new StackPanel { Spacing = 11, Margin = new Thickness(14, 10, 14, 10) };
+        var tabs = new Grid { ColumnDefinitions = new ColumnDefinitions("*,2,*") };
         chatTab.Click += (_, _) => ChangeTab(false);
         todayTab.Click += (_, _) => ChangeTab(true);
         Put(tabs, chatTab, 0);
         Put(tabs, todayTab, 2);
-        body.Children.Add(tabs);
+        body.Children.Add(new Border { CornerRadius = new CornerRadius(8), Padding = new Thickness(3), Background = inset, Child = tabs });
         body.Children.Add(mainPanel);
         details.Child = body;
     }
@@ -431,7 +460,7 @@ internal sealed class Meter
     private void SetExpanded(bool setting)
     {
         expanded = setting;
-        toggle.Content = expanded ? "明细  ⌃" : "明细  ⌄";
+        chevron.Data = expanded ? ChevronUp : ChevronDown;
         AutomationProperties.SetName(toggle, expanded ? "收起用量明细" : "展开用量明细");
         Render();
         Place();
@@ -440,7 +469,9 @@ internal sealed class Meter
 
     private void ChangeTab(bool useToday) { showToday = useToday; SetExpanded(true); }
 
-    private double DetailHeight => showToday ? 144 + (Math.Clamp(daily?.Models.Count ?? 1, 1, 6) * 27) : 225;
+    private double DetailHeight => showToday
+        ? TodayFixedHeight + Math.Min(ModelListHeight, Math.Max(1, daily?.Models.Count ?? 1) * ModelRowHeight)
+        : ChatHeight;
 
     private void Place()
     {
@@ -494,20 +525,31 @@ internal sealed class Meter
         model.Text = slug == null ? "等待当前对话" : FormatModel(slug);
         ToolTip.SetTip(model, followProblem ?? readProblem ?? slug);
         TokenCounts counts = current?.Total;
-        dot.Background = counts == null || current.MissingUsage ? stroke : accent;
-        smallTotal.Text = counts == null ? "— token" : Compact(counts.Total) + " token";
+        dot.Fill = counts == null || current.MissingUsage ? stroke : accent;
+        smallTotal.Text = counts == null ? "—" : Compact(counts.Total);
         AutomationProperties.SetName(smallTotal, counts == null ? "等待会话用量" : "会话累计 " + Number(counts.Total) + " token");
         details.IsVisible = expanded;
         if (!expanded) return;
         details.Height = DetailHeight;
         chatTab.Background = showToday ? Brushes.Transparent : selected;
         todayTab.Background = showToday ? selected : Brushes.Transparent;
+        chatTab.Foreground = showToday ? quiet : ink;
+        todayTab.Foreground = showToday ? ink : quiet;
         mainPanel.Children.Clear();
 
         if (showToday)
         {
-            mainPanel.Children.Add(Metric("今日总用量", daily == null ? "—" : Number(daily.Total) + " token", 24));
-            mainPanel.Children.Add(Label(daily?.Partial == true ? "北京时间 00:00 起 · 部分用量缺失" : "北京时间 00:00 起 · 本机 · 含缓存输入", 11, false, true));
+            mainPanel.Children.Add(new StackPanel
+            {
+                Spacing = 2,
+                Children =
+                {
+                    Label("今日总用量", 11, false, true),
+                    AmountWithUnit(NumberLabel(Number(daily?.Total), 25), 11, 6),
+                    Label(daily?.Partial == true ? "北京时间 00:00 起 · 部分用量缺失" : "北京时间 00:00 起 · 本机记录", 11, false, true)
+                }
+            });
+            mainPanel.Children.Add(Label("按模型", 11, false, true));
             if (daily == null || daily.Models.Count == 0)
                 mainPanel.Children.Add(Label(daily == null ? "正在读取本地用量…" : "今天还没有本地用量", 12, false, true));
             else
@@ -515,20 +557,30 @@ internal sealed class Meter
                 var rows = new StackPanel();
                 foreach (var entry in daily.Models.OrderByDescending(x => x.Value).ThenBy(x => x.Key))
                 {
-                    var row = new Grid { ColumnDefinitions = new ColumnDefinitions("*,Auto"), Height = 27 };
+                    var row = new Grid { ColumnDefinitions = new ColumnDefinitions("*,Auto"), Height = ModelRowHeight };
                     Put(row, Label(entry.Key.Length == 0 ? "模型未知" : FormatModel(entry.Key), 12), 0);
-                    Put(row, Label(Number(entry.Value), 12, true), 1);
+                    Put(row, NumberLabel(Number(entry.Value), 13), 1);
                     rows.Children.Add(row);
                 }
-                mainPanel.Children.Add(new ScrollViewer { MaxHeight = 162, VerticalScrollBarVisibility = ScrollBarVisibility.Auto, Content = rows });
+                mainPanel.Children.Add(new ScrollViewer { MaxHeight = ModelListHeight, VerticalScrollBarVisibility = ScrollBarVisibility.Auto, Content = rows });
             }
         }
         else
         {
-            mainPanel.Children.Add(Pair(Metric("会话累计", Number(counts?.Total), 22), Metric("最近一次模型请求", Number(current?.Last?.Total), 22)));
+            var recent = Metric("最近一次请求", Number(current?.Last?.Total), 17);
+            recent.VerticalAlignment = VerticalAlignment.Bottom;
+            mainPanel.Children.Add(Pair(Metric("会话累计", Number(counts?.Total), 25), recent, "3*,2*"));
             mainPanel.Children.Add(new Border { Height = 1, Background = stroke });
-            mainPanel.Children.Add(Pair(Metric("输入", Number(counts?.Input), 14), Metric("其中缓存输入", Number(counts?.Cached), 14)));
-            mainPanel.Children.Add(Pair(Metric("输出", Number(counts?.Output), 14), Metric("推理", Number(counts?.Reasoning), 14)));
+            mainPanel.Children.Add(new StackPanel
+            {
+                Spacing = 5,
+                Children =
+                {
+                    Pair(Metric("输入", Number(counts?.Input), 16), Metric("输出", Number(counts?.Output), 16)),
+                    Pair(Metric("其中缓存", Number(counts?.Cached), 13), Metric("其中推理", Number(counts?.Reasoning), 13))
+                }
+            });
+            mainPanel.Children.Add(CacheIndicator(MeterLayout.CacheShare(counts)));
             status.Text = readProblem ?? followProblem ?? (current?.MissingUsage == true ? "当前对话有请求未回报完整用量" : current?.UpdatedAt == null
                 ? "等待当前对话回报用量" : (config.Pinned == null ? "自动跟随" : "手动绑定") + " · 更新于 " + current.UpdatedAt.Value.Add(TodayStore.BeijingOffset).ToString("HH:mm:ss", Digits));
             mainPanel.Children.Add(status);
@@ -546,24 +598,61 @@ internal sealed class Meter
         lifetime.Shutdown();
     }
 
-    private static Grid Pair(Control first, Control second)
+    private static Grid Pair(Control first, Control second, string columns = "*,*")
     {
-        var row = new Grid { ColumnDefinitions = new ColumnDefinitions("*,*") };
+        var row = new Grid { ColumnDefinitions = new ColumnDefinitions(columns) };
         Put(row, first, 0);
         Put(row, second, 1);
         return row;
     }
 
-    private StackPanel Metric(string name, string exact, int size) => new() { Spacing = 1, Children = { Label(name, 11, false, true), Label(exact, size, true) } };
+    private StackPanel Metric(string name, string exact, int size) => new()
+    {
+        Spacing = 1,
+        Children =
+        {
+            Label(name, 11, false, true),
+            new Viewbox
+            {
+                Child = NumberLabel(exact, size), Stretch = Stretch.Uniform, StretchDirection = StretchDirection.DownOnly,
+                HorizontalAlignment = HorizontalAlignment.Left
+            }
+        }
+    };
+
+    private StackPanel CacheIndicator(double? share)
+    {
+        var caption = Pair(Label("缓存输入占比", 11, false, true), NumberLabel(share?.ToString("P1", Digits) ?? "—", 11), "*,Auto");
+        double fraction = share.GetValueOrDefault();
+        var fill = new Border { Background = accent, CornerRadius = new CornerRadius(2), HorizontalAlignment = HorizontalAlignment.Left };
+        var rail = new Border { Height = 4, CornerRadius = new CornerRadius(2), Background = track, Child = fill };
+        rail.SizeChanged += (_, _) => fill.Width = rail.Bounds.Width * fraction;
+        return new StackPanel { Spacing = 3, Children = { caption, rail } };
+    }
+
+    private StackPanel AmountWithUnit(TextBlock amount, double size, double offset)
+    {
+        var unit = Label("token", size, false, true);
+        unit.Margin = new Thickness(0, offset, 0, 0);
+        return new StackPanel { Orientation = Orientation.Horizontal, Spacing = 5, Children = { amount, unit } };
+    }
+
+    private TextBlock NumberLabel(string exact, double size)
+    {
+        var label = Label(exact, size, true);
+        label.FontFamily = NumberFont;
+        return label;
+    }
     private Border Panel(int radius) => new() { CornerRadius = new CornerRadius(radius), BorderThickness = new Thickness(1), BorderBrush = stroke, Background = surface };
     private TextBlock Label(string title, double size, bool strong = false, bool subdued = false) => new()
     {
         Text = title, FontSize = size, FontWeight = strong ? FontWeight.SemiBold : FontWeight.Normal, Foreground = subdued ? quiet : ink,
         VerticalAlignment = VerticalAlignment.Center, TextTrimming = TextTrimming.CharacterEllipsis, MaxLines = 1
     };
-    private Button Control(string title) => new()
+    private Button Control(object title) => new()
     {
-        Content = title, FontSize = 12, Height = 27, Background = Brushes.Transparent, Foreground = ink, Padding = new Thickness(2, 2),
+        Content = title, FontSize = 12, Height = 26, Background = Brushes.Transparent, Foreground = ink, Padding = new Thickness(2, 2),
+        CornerRadius = new CornerRadius(6), BorderThickness = new Thickness(0),
         VerticalAlignment = VerticalAlignment.Center, HorizontalAlignment = HorizontalAlignment.Stretch, HorizontalContentAlignment = HorizontalAlignment.Center
     };
     private static void Put(Grid grid, Control control, int column) { Grid.SetColumn(control, column); grid.Children.Add(control); }

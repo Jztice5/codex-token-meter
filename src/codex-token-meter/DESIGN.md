@@ -17,6 +17,8 @@ colors:
   track-dark: "#303F3D"
   hover: "#EAF2EF"
   hover-dark: "#303735"
+  inset: "#F3F5F5"
+  inset-dark: "#222425"
 typography:
   sans:
     fontFamily: "Segoe UI, Microsoft YaHei UI"
@@ -42,11 +44,11 @@ The floating meter shows a small green status point, a model name, an abbreviate
 
 ## Colors
 
-Use Codex's light or dark appearance when it is explicitly set. Otherwise use the operating system's app appearance. The green signal means usage is available and marks the cached share of input in Windows details. Use the Windows system brushes in high-contrast mode and mark the selected view with a subtle fill.
+Use Codex's light or dark appearance when it is explicitly set. Otherwise use the operating system's app appearance. The green signal marks available usage and the cached share of input. An inset surface groups the tabs and gives the details action a visible hit target. Use the Windows system brushes in high-contrast mode.
 
 ## Typography
 
-Segoe UI handles numeric and Latin text, and Microsoft YaHei UI handles Simplified Chinese. The compact line uses 12–13 DIPs. The disclosure emphasizes its two main figures at 22 DIPs and keeps supplemental totals at 14 DIPs.
+Use the platform UI font for labels and a monospaced font for token values. The compact value uses 14 DIPs with a smaller unit. Details emphasize the cumulative total at 25 DIPs, keep the latest request secondary at 17 DIPs, and group cached input beneath input and reasoning beneath output.
 
 ## Layout
 
@@ -62,4 +64,4 @@ The strip uses a 10 DIP radius, the disclosure 12 DIPs, and the button hover sur
 
 ## Components
 
-The drag handle has a separate hit target from the details button. The tray provides keyboard access and position reset. Control plus arrow keys move the focused strip. Opening details keeps focus on its button, and Escape closes it. Missing usage stays a dash with a short reason in the disclosure. The cache mark uses cached input divided by input. The time scope sits below the daily total. Model rows sort by tokens, and the list scrolls if needed.
+The drag handle has a separate hit target from the details button. Both chevron directions share the same geometry bounds and center across themes. The round status dot sits on the model label's optical centerline. The tray provides keyboard access and position reset. On Windows, Control plus arrow keys move the focused strip. Opening details keeps focus on its button, and Escape closes it. Missing usage stays a dash with a short reason in the disclosure. The cache rail and percentage use cached input divided by input. The time scope sits below the daily total, and model values align on the right. Model rows sort by tokens, and the list scrolls if needed.
